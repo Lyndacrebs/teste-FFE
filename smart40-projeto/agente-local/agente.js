@@ -9,10 +9,10 @@ const ESTACOES = {
   estoque: {
     ip: '192.168.150.10',
     variaveis: {
-      statusOk: 'DB1,X0.0',
-      emergencia: 'DB1,X0.1',
-      motorEsteira: 'DB1,X0.2',
-      magazine: 'DB1,B2'
+      statusOk: 'DB9,X0.0',     
+      emergencia: 'DB9,X0.1',   
+      motorEsteira: 'DB9,X0.2', 
+      magazine: 'DB9,B2'        
     }
   }
 };
@@ -31,6 +31,10 @@ function conectarBroker() {
 
   socket.on('open', () => {
     console.log('[Broker] Agente conectado');
+  });
+
+  socket.on('error', (err) => {
+    console.error('[Erro no Broker WebSocket]:', err.message);
   });
 
   socket.on('message', async (raw) => {
@@ -58,19 +62,30 @@ function conectarBroker() {
   });
 }
 
-async function ciclo() {
-  for (const [nome, leitor] of Object.entries(leitores)) {
-    const valores = await leitor.ler();
-    if (valores) {
-      estado.estacoes[nome] = {
-        status: valores.emergencia ? 'EMERGENCIA' : (valores.statusOk ? 'OPERANDO' : 'AGUARDANDO'),
-        magazine: valores.magazine || 0
-      };
-    }
-  }
+let lendo = false;
 
-  if (socket && socket.readyState === 1) {
-    socket.send(JSON.stringify({ timestamp: new Date().toISOString(), ...estado }));
+async function ciclo() {
+  if (lendo) return; // Evita sobrecarregar a fila de leitura do CLP
+  lendo = true;
+
+  try {
+    for (const [nome, leitor] of Object.entries(leitores)) {
+      const valores = await leitor.ler();
+      if (valores) {
+        estado.estacoes[nome] = {
+          status: valores.emergencia ? 'EMERGENCIA' : (valores.statusOk ? 'OPERANDO' : 'AGUARDANDO'),
+          magazine: valores.magazine || 0
+        };
+      }
+    }
+
+    if (socket && socket.readyState === 1) {
+      socket.send(JSON.stringify({ timestamp: new Date().toISOString(), ...estado }));
+    }
+  } catch (err) {
+    console.error('Erro no ciclo de leitura:', err);
+  } finally {
+    lendo = false;
   }
 }
 
