@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Controle e Logs - Smart 4.0</title>
+    <style>
+        :root {
+            --bg-color: #1a1d20; --card-bg: #24282e; --text-color: #e1e6ed;
+            --accent-green: #28a745; --accent-red: #dc3545; --accent-blue: #007bff; --accent-yellow: #ffc107;
+        }
+        body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
+        .card { background-color: var(--card-bg); border-radius: 10px; padding: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        h2 { margin-top: 0; border-bottom: 2px solid #3a3f47; padding-bottom: 10px; font-size: 1.2rem; }
+        .status-indicators { display: flex; justify-content: space-around; width: 100%; margin-bottom: 15px; }
+        .led-container { display: flex; flex-direction: column; align-items: center; font-size: 0.75rem; font-weight: bold; }
+        .led { width: 25px; height: 25px; border-radius: 50%; background-color: #444; margin-bottom: 5px; box-shadow: inset 0 0 5px #000; }
+        .led.green.active { background-color: #00ff66; box-shadow: 0 0 12px #00ff66; }
+        .led.red.active { background-color: #ff0033; box-shadow: 0 0 12px #ff0033; }
+        .painel-botoes { display: flex; flex-direction: column; gap: 15px; align-items: center; }
+        .btn-industrial { width: 80%; padding: 15px; border: none; border-radius: 8px; font-weight: bold; font-size: 1rem; cursor: pointer; text-transform: uppercase; box-shadow: 0 4px 0 rgba(0,0,0,0.4); }
+        .btn-industrial:active { transform: translateY(4px); box-shadow: none; }
+        .btn-start { background-color: var(--accent-green); color: white; }
+        .btn-stop { background-color: var(--accent-red); color: white; }
+        .btn-reset { background-color: var(--accent-blue); color: white; }
+        .btn-emergency { background-color: var(--accent-yellow); color: #000; border: 3px solid #dc3545; }
+        .header-logs { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .btn-action { background-color: #3a3f47; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; }
+        .log-table-container { max-height: 450px; overflow-y: auto; border: 1px solid #3a3f47; border-radius: 5px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #3a3f47; }
+        th { background-color: #1f2226; position: sticky; top: 0; color: #8892b0; }
+        .tag-status { padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+        .tag-INFO { background-color: #17a2b8; color: white; }
+        .tag-COMANDO { background-color: #007bff; color: white; }
+        .tag-ALERT { background-color: #ffc107; color: black; }
+        .tag-EMERGENCIA { background-color: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card">
+        <h2>Painel da Estação</h2>
+        <div class="status-indicators">
+            <div class="led-container">
+                <div id="ledSegurancaOk" class="led green active"></div>
+                SEGURANÇA OK
+            </div>
+            <div class="led-container">
+                <div id="ledSegurancaAtivada" class="led red"></div>
+                SEGURANÇA ATIVADA
+            </div>
+        </div>
+
+        <div class="painel-botoes">
+            <button class="btn-industrial btn-start" onclick="enviarComando('START')">▶ START</button>
+            <button class="btn-industrial btn-stop" onclick="enviarComando('STOP')">⏹ STOP</button>
+            <button class="btn-industrial btn-reset" onclick="enviarComando('RESET')">🔄 RESET</button>
+            <button class="btn-industrial btn-emergency" onclick="enviarComando('EMERGENCY_STOP')">⚠️ SEGURANÇA / EMERGÊNCIA</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="header-logs">
+            <h2>Relatório em Tempo Real (Logs)</h2>
+            <div>
+                <button class="btn-action" onclick="exportarCSV()">📥 Baixar Relatório</button>
+                <button class="btn-action" style="background-color: #dc3545;" onclick="limparHistorico()">🗑️ Limpar</button>
+            </div>
+        </div>
+
+        <div class="log-table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data/Hora</th>
+                        <th>Tipo</th>
+                        <th>Origem</th>
+                        <th>Descrição da Ação/Status</th>
+                    </tr>
+                </thead>
+                <tbody id="tabelaLogs"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Se for testar com o simulador local, mude para: "ws://localhost:8080"
+    const BROKER_URL = "ws://localhost:8080";    let socket = null;
+
+    window.onload = () => {
+        carregarLogsDoStorage();
+        conectarWebSocket();
+    };
+
+    function conectarWebSocket() {
+        socket = new WebSocket(BROKER_URL);
+
+        socket.onopen = () => {
+            adicionarLog("INFO", "SISTEMA", "Conectado ao Broker WebSocket com sucesso.");
+        };
+
+        socket.onmessage = (event) => {
+            try {
+                const dados = JSON.parse(event.data);
+                if (dados.estacoes) atualizarLedsInterface(dados);
+                if (dados.tipo === 'erro') adicionarLog("ALERT", "BROKER", dados.mensagem);
+            } catch (e) {
+                console.error("Erro no JSON:", e);
+            }
+        };
+
+        socket.onclose = () => {
+            adicionarLog("ALERT", "SISTEMA", "Conexão perdida. Tentando reconectar em 5s...");
+            setTimeout(conectarWebSocket, 5000);
+        };
+    }
+
+    function enviarComando(tipoAcao) {
+        const payload = {
+            origem: "unidade1-grupo1",
+            acao: tipoAcao,
+            timestamp: new Date().toISOString()
+        };
+
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(payload));
+            const tipoLog = (tipoAcao === 'EMERGENCY_STOP') ? 'EMERGENCIA' : 'COMANDO';
+            adicionarLog(tipoLog, "INTERFACE_SPA", `Comando ${tipoAcao} enviado.`);
+        } else {
+            adicionarLog("EMERGENCIA", "SISTEMA", `Falha ao enviar ${tipoAcao}: Servidor offline.`);
+        }
+    }
+
+    function atualizarLedsInterface(telemetria) {
+        const estacao = telemetria.estacoes?.estoque;
+        if (!estacao) return;
+
+        const ledOk = document.getElementById("ledSegurancaOk");
+        const ledAtivada = document.getElementById("ledSegurancaAtivada");
+
+        if (estacao.status === "EMERGENCIA") {
+            ledOk.classList.remove("active");
+            ledAtivada.classList.add("active");
+        } else {
+            ledOk.classList.add("active");
+            ledAtivada.classList.remove("active");
+        }
+    }
+
+    function adicionarLog(tipo, origem, descricao) {
+        const novoLog = {
+            timestamp: new Date().toLocaleString("pt-BR"),
+            tipo: tipo,
+            origem: origem,
+            descricao: descricao
+        };
+
+        const logsAntigos = JSON.parse(localStorage.getItem("logs_smart40") || "[]");
+        logsAntigos.unshift(novoLog);
+        localStorage.setItem("logs_smart40", JSON.stringify(logsAntigos));
+        renderizarLinhaTabela(novoLog, true);
+    }
+
+    function renderizarLinhaTabela(log, topo = false) {
+        const tbody = document.getElementById("tabelaLogs");
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td>${log.timestamp}</td>
+            <td><span class="tag-status tag-${log.tipo}">${log.tipo}</span></td>
+            <td>${log.origem}</td>
+            <td>${log.descricao}</td>
+        `;
+        if (topo && tbody.firstChild) tbody.insertBefore(tr, tbody.firstChild);
+        else tbody.appendChild(tr);
+    }
+
+    function carregarLogsDoStorage() {
+        const tbody = document.getElementById("tabelaLogs");
+        tbody.innerHTML = "";
+        const logs = JSON.parse(localStorage.getItem("logs_smart40") || "[]");
+        logs.forEach(log => renderizarLinhaTabela(log));
+    }
+
+    function limparHistorico() {
+        if (confirm("Deseja apagar todo o histórico de logs local?")) {
+            localStorage.removeItem("logs_smart40");
+            carregarLogsDoStorage();
+        }
+    }
+
+    function exportarCSV() {
+        const logs = JSON.parse(localStorage.getItem("logs_smart40") || "[]");
+        if (logs.length === 0) return alert("Sem logs para exportar.");
+
+        let csvContent = "data:text/csv;charset=utf-8,Data/Hora,Tipo,Origem,Descricao\n";
+        logs.forEach(l => {
+            csvContent += `"${l.timestamp}","${l.tipo}","${l.origem}","${l.descricao}"\n`;
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `relatorio_maquina_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "smart40-agente",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "agente.js",
+  "scripts": {
+    "start": "node agente.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "nodes7": "^0.3.18",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
